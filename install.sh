@@ -19,10 +19,15 @@ SRC
 
 # Always take gnome-remote-desktop from this repository, even while it lags
 # behind a newer Ubuntu version (it is rebuilt daily on Ubuntu updates).
+# Never install any other package from it.
 cat > /etc/apt/preferences.d/gnome-remote-desktop-logonnotify <<PIN
 Package: gnome-remote-desktop
 Pin: origin "$host"
 Pin-Priority: 1001
+
+Package: *
+Pin: origin "$host"
+Pin-Priority: -1
 PIN
 
 apt-mark unhold gnome-remote-desktop > /dev/null 2>&1 || true
