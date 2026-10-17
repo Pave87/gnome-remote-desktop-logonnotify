@@ -1,0 +1,141 @@
+Description: Send logon notification (Save Session Info) to the RDP client
+ [MS-RDPBCGR] 3.3.5.10.1. Without it mstsc does not add the host to its
+ connection history. Same change as the upstream merge request.
+--- a/src/grd-session-rdp.c
++++ b/src/grd-session-rdp.c
+@@ -25,6 +25,7 @@
+ #include <freerdp/crypto/crypto.h>
+ #include <freerdp/freerdp.h>
+ #include <freerdp/peer.h>
++#include <freerdp/session.h>
+ #include <gio/gio.h>
+ #include <glib-unix.h>
+ #include <krb5.h>
+@@ -34,6 +35,7 @@
+ 
+ #include "grd-clipboard-rdp.h"
+ #include "grd-context.h"
++#include "grd-daemon-utils.h"
+ #include "grd-rdp-cursor-renderer.h"
+ #include "grd-rdp-dvc-audio-input.h"
+ #include "grd-rdp-dvc-audio-playback.h"
+@@ -1270,6 +1272,110 @@
+   g_signal_emit (session_rdp, signals[POST_CONNECTED], 0);
+ }
+ 
++static const char *
++logon_info_type_to_string (uint32_t info_type)
++{
++  switch (info_type)
++    {
++    case INFO_TYPE_LOGON:
++      return "logon";
++    case INFO_TYPE_LOGON_LONG:
++      return "logon long";
++    case INFO_TYPE_LOGON_PLAIN_NOTIFY:
++      return "plain notify";
++    }
++
++  g_assert_not_reached ();
++}
++
++static void
++send_logon_notification (GrdSessionRdp *session_rdp,
++                         freerdp_peer  *peer)
++{
++  GrdContext *context = grd_session_get_context (GRD_SESSION (session_rdp));
++  rdpSettings *rdp_settings = peer->context->settings;
++  rdpUpdate *update = peer->context->update;
++  const char *client_username =
++    freerdp_settings_get_string (rdp_settings, FreeRDP_Username);
++  const char *client_domain =
++    freerdp_settings_get_string (rdp_settings, FreeRDP_Domain);
++  const char *username = NULL;
++  const char *domain = NULL;
++  logon_info info = {};
++  uint32_t info_type;
++
++  if (!client_username)
++    client_username = "";
++  if (!client_domain)
++    client_domain = "";
++
++  switch (grd_context_get_runtime_mode (context))
++    {
++    case GRD_RUNTIME_MODE_SYSTEM:
++      /* The system daemon only redirects the client */
++      return;
++    case GRD_RUNTIME_MODE_HANDOVER:
++      /* The remote login greeter runs before the user has logged on */
++      if (grd_is_remote_login ())
++        return;
++
++      /*
++       * The client only knows the one-time credentials of the handover. The
++       * user logged on to this session via the remote login greeter.
++       */
++      username = g_get_user_name ();
++      domain = "";
++      break;
++    case GRD_RUNTIME_MODE_HEADLESS:
++    case GRD_RUNTIME_MODE_SCREEN_SHARE:
++      username = client_username;
++      domain = client_domain;
++      break;
++    }
++
++  /*
++   * [MS-RDPBCGR] 3.3.5.10.1: "The client SHOULD always be notified after
++   * the user has logged on." Windows servers send the logon information
++   * (username, domain), if the client set INFO_LOGONNOTIFY and
++   * INFO_AUTOLOGON in the Client Info PDU, or if the username or domain
++   * used to log on differs from the one in the Client Info PDU. Otherwise,
++   * a plain notification is sent. Without any notification, mstsc does not
++   * add the host to its connection history.
++   */
++  if ((freerdp_settings_get_bool (rdp_settings, FreeRDP_LogonNotify) &&
++       freerdp_settings_get_bool (rdp_settings, FreeRDP_AutoLogonEnabled)) ||
++      g_strcmp0 (username, client_username) != 0 ||
++      g_strcmp0 (domain, client_domain) != 0)
++    {
++      if (freerdp_settings_get_bool (rdp_settings,
++                                     FreeRDP_LongCredentialsSupported))
++        info_type = INFO_TYPE_LOGON_LONG;
++      else
++        info_type = INFO_TYPE_LOGON;
++    }
++  else
++    {
++      info_type = INFO_TYPE_LOGON_PLAIN_NOTIFY;
++    }
++
++  info.sessionId = 0;
++  info.username = (char *) username;
++  info.domain = (char *) domain;
++
++  if (!update->SaveSessionInfo ||
++      !update->SaveSessionInfo (peer->context, info_type,
++                                info_type == INFO_TYPE_LOGON_PLAIN_NOTIFY ?
++                                NULL : &info))
++    {
++      g_warning ("[RDP] Failed to send logon notification (%s)",
++                 logon_info_type_to_string (info_type));
++      return;
++    }
++
++  g_debug ("[RDP] Sent logon notification (%s)",
++           logon_info_type_to_string (info_type));
++}
++
+ static BOOL
+ rdp_peer_post_connect (freerdp_peer *peer)
+ {
+@@ -1342,6 +1448,8 @@
+         GRD_RDP_NW_AUTODETECT_RTT_CONSUMER_RDPGFX);
+     }
+ 
++  send_logon_notification (session_rdp, peer);
++
+   set_rdp_peer_flag (session_rdp, RDP_PEER_ACTIVATED);
+ 
+   g_mutex_lock (&session_rdp->notify_post_connected_mutex);
