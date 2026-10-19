@@ -28,6 +28,10 @@ jobs:
     container: ubuntu:26.04
     outputs:
       built: ${{ steps.build.outputs.built }}
+    env:
+      # runner.temp is a host path that differs inside the container
+      OUT: /tmp/grd/out
+      SITE: /tmp/grd/site
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -42,7 +46,6 @@ jobs:
       - name: Build
         id: build
         env:
-          OUT: ${{ runner.temp }}/out
           PUBLISHED_PACKAGES: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/Packages
           FORCE: ${{ inputs.force && 'true' || 'false' }}
         run: |
@@ -60,13 +63,13 @@ jobs:
         run: |
           echo "$SIGNING_KEY" | gpg --batch --import
           fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr:/ { print $10; exit }')
-          bash ./publish.sh "${{ runner.temp }}/out" "${{ runner.temp }}/site" "$fpr" \
+          bash ./publish.sh "$OUT" "$SITE" "$fpr" \
             "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
 
       - uses: actions/upload-pages-artifact@v5.0.0
         if: steps.build.outputs.built == 'true'
         with:
-          path: ${{ runner.temp }}/site
+          path: /tmp/grd/site
 
   deploy:
     needs: build
