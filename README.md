@@ -11,7 +11,7 @@ repository once Ubuntu ships the fix.
 ## Install on a VM
 
 ```
-curl -fsSL https://OWNER.github.io/gnome-remote-desktop-logonnotify/install.sh | sudo bash
+curl -fsSL https://pave87.github.io/gnome-remote-desktop-logonnotify/install.sh | sudo bash
 ```
 
 This adds the signing key, the apt source and a pin so `gnome-remote-desktop`
